@@ -145,7 +145,7 @@ class HotStuffDemo:
         node = self.nodes[node_id - 1]
 
         # 检查提案本身合法 → 该副本允许投票 → 才记这一票
-        if block is not None and node.can_vote(block):
+        if block is not None and self._valid_proposal(block) and node.can_vote(block):
             self.votes.setdefault(block_id, set()).add(node_id)  # 用 set 去重
             node.last_voted_view = block.view                    # 记录“我在这个视图投过票了”
             self.log(f"N{node_id} voted for {block_id} (view {block.view})", "vote")
@@ -320,3 +320,25 @@ class HotStuffDemo:
         if any(self.blocks[b].transactions for b in ordered):
             self.finalize_transactions(ordered)
         return ordered
+
+    # 增加A2的检查 proposal validation
+    def _valid_proposal(self, block: Block) -> bool:
+        # 视图必须和协调器当前视图一致
+        if block.view != self.view:
+            return False
+        # 提案人必须是当前视图的 leader
+        if block.proposer != self.leader_id:
+            return False
+        # 提案人必须存活（否则这个提案是“死提案”，不能继续收集票）
+        if self.nodes[block.proposer - 1].crashed:
+            return False
+        # 父块必须已知
+        if block.parent_id is None or block.parent_id not in self.blocks:
+            return False
+        # 必须携带“父块的证书”，且该证书确实认证的是父块
+        if block.qc is None or block.qc.block_id != block.parent_id:
+            return False
+        # 该证书必须已在协调器登记过
+        if block.qc.block_id not in self.qcs:
+            return False
+        return True
