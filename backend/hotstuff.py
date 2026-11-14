@@ -65,6 +65,7 @@ class HotStuffDemo:
                 self.events.append(("propose", None))
             action, data = self.events.popleft()
             self.steps += 1
+            # 根据事件名调用对应的函数，传入数据
             {"propose": self.propose, "vote": self.vote, "qc": self.form_qc,
              "next_view": self.next_view, "timeout": self.timeout}[action](data)
         except NotImplementedError as exc:
@@ -83,7 +84,51 @@ class HotStuffDemo:
         Call select_transactions(parent) only when the mempool is nonempty;
         otherwise use an empty payload, allowing independent Task A work.
         A6: handle a crashed leader using the timeout event. No balances change."""
-        raise NotImplementedError('TODO A1 implement a leader proposal for the current view.')
+
+        # Hengyu
+        # 取出当前view的 leader
+        leader = self.nodes[self.leader_id - 1]
+
+        # 如果 leader 已崩溃：这次propose做不了，改排一个超时事件（未来做A6 的入口）
+        if leader.crashed:
+            self.log(f"Leader N{self.leader_id} crashed; scheduling timeout", "timeout")
+            self.events.append(("timeout", self.TIMEOUT_TICKS))
+            self.phase = "Leader crashed"
+            return
+
+        # 父块 = leader 已知最高证书记录的块, 继承已认证进度
+        parent_id = leader.high_qc.block_id
+        parent = self.blocks[parent_id]
+
+        # 造新块：ID 顺序编号；qc 字段放“父块的证书”；
+        # 只有 mempool 非空才去选交易，否则用空块
+        block = Block(
+            id=f"B{len(self.blocks)}",
+            parent_id=parent_id,
+            view=self.view,
+            proposer=self.leader_id,
+            transactions=self.select_transactions(parent) if self.mempool else [],
+            qc=leader.high_qc,
+        )
+
+        # 协调器登记这个块 + 初始化空投票集合
+        self.blocks[block.id] = block
+        self.votes[block.id] = set()
+
+        # 把块分发给每个“存活”副本, receive_qc 是从 node.blocks 里查块的
+        # 崩溃副本不发，保证它状态冻结
+        for node in self.nodes:
+            if not node.crashed:
+                node.blocks[block.id] = block
+
+        self.log(f"N{self.leader_id} proposed {block.id} (view {self.view}, parent {parent_id})", "propose")
+        self.phase = f"Proposed {block.id}"
+
+        # 给 4 个副本各排一个投票事件, 崩溃节点也会排，但投票时会被判为无效，相当于空操作
+        for node in self.nodes:
+            self.events.append(("vote", (node.id, block.id)))
+
+    # raise NotImplementedError('TODO A1 implement a leader proposal for the current view.')
 
     def vote(self, data):
         """A2 implement proposal validation and one safe vote per replica/view.

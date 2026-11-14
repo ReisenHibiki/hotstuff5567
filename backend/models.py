@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
 
-
+# 数据结构表
 @dataclass(frozen=True)
 class Transaction:
     id: str
