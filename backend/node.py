@@ -25,14 +25,52 @@ class Node:
         """A2 test whether block_id descends from ancestor_id, including itself.
         Use local parent links. Unknown or malformed ancestry must not be
         accepted as an extension. Return a Boolean without modifying state."""
-        raise NotImplementedError('TODO A2 test whether block_id descends from ancestor_id, including itself.')
+
+        # 两个块都必须在本节点已知的块里，否则视作非法祖先关系
+        if block_id not in self.blocks or ancestor_id not in self.blocks:
+            return False
+
+        current = block_id
+        seen = set()  # AI建议的改进防止异常数据造成死循环(this line: AI assist Improvement for possible bug)
+        # 沿 parent 链往上走，边走边找 ancestor
+        while current is not None and current not in seen:
+            if current == ancestor_id:
+                return True          # 走到祖先, 或一开始就是它本身
+            seen.add(current)
+            current = self.blocks[current].parent_id
+        return False
+
+        # raise NotImplementedError('TODO A2 test whether block_id descends from ancestor_id, including itself.')
 
     def can_vote(self, block: Block) -> bool:
         """A2 decide whether this replica may vote for a proposal.
         Enforce availability, current view, one vote per view and the safe-node
         lock rule. Return a Boolean; vote() records the actual cast vote.
         The coordinator validates the proposal leader and parent certificate."""
-        raise NotImplementedError('TODO A2 decide whether this replica may vote for a proposal.')
+
+        # 崩溃的、或被设为“扣票”的副本不投
+        if self.crashed or self.withhold_vote:
+            return False
+
+        # VIEW必须一致
+        if block.view != self.view:
+            return False
+
+        # IMPORTANT 每个视图最多投一票
+        if self.last_voted_view == block.view:
+            return False
+
+        # 新提案接在“锁定分支”后面（含直接接在锁定块上）
+        if block.parent_id is not None and self.extends(block.parent_id, self.locked_qc.block_id):
+            return True
+
+        # 如果提案自带一张 view 更高的 QC，允许换分支
+        if block.qc is not None and block.qc.view > self.locked_qc.view:
+            return True
+
+        return False
+
+        # raise NotImplementedError('TODO A2 decide whether this replica may vote for a proposal.')
 
     def receive_qc(self, qc: QC) -> list[str]:
         """A4 update certificate/lock state and decide committed block IDs.

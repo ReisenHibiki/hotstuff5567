@@ -65,7 +65,7 @@ class HotStuffDemo:
                 self.events.append(("propose", None))
             action, data = self.events.popleft()
             self.steps += 1
-            # 根据事件名调用对应的函数，传入数据
+            # 这里根据5个事件名调用对应的函数，传入数据
             {"propose": self.propose, "vote": self.vote, "qc": self.form_qc,
              "next_view": self.next_view, "timeout": self.timeout}[action](data)
         except NotImplementedError as exc:
@@ -137,7 +137,38 @@ class HotStuffDemo:
         distinct voters. Once a quorum is reached, enqueue a single ("qc", id)
         event. Reject invalid proposals without changing voting or account state.
         A6: schedule a timeout if this round cannot obtain a QC."""
-        raise NotImplementedError('TODO A2 implement proposal validation and one safe vote per replica/view.')
+
+        # coordinator 收到vote处理vote
+        # data 是 投票节点号和块号
+        node_id, block_id = data
+        block = self.blocks.get(block_id)
+        node = self.nodes[node_id - 1]
+
+        # 检查提案本身合法 → 该副本允许投票 → 才记这一票
+        if block is not None and node.can_vote(block):
+            self.votes.setdefault(block_id, set()).add(node_id)  # 用 set 去重
+            node.last_voted_view = block.view                    # 记录“我在这个视图投过票了”
+            self.log(f"N{node_id} voted for {block_id} (view {block.view})", "vote")
+
+        # 投票结束后，判断是否可以出 QC / 是否该超时
+        if block is not None:
+            voters = self.votes.get(block_id, set())
+
+            # 已经安排过 QC 了，直接返回（避免重复）
+            if block_id in self.qc_scheduled:
+                return
+
+            # 不同投票者达到法定人数（3）→ 排一个 QC 事件
+            if len(voters) >= self.QUORUM:
+                self.qc_scheduled.add(block_id)
+                self.events.append(("qc", block_id))
+
+            # 还没够票、并且队列里没有更多投票事件了 → 这一轮救不回来，排超时
+            elif not any(e[0] == "vote" for e in self.events):
+                self.events.append(("timeout", self.TIMEOUT_TICKS))
+                self.log(f"Timeout: view {self.view} cannot reach quorum", "timeout")
+
+    # raise NotImplementedError('TODO A2 implement proposal validation and one safe vote per replica/view.')
 
     def form_qc(self, block_id):
         """A3 construct a certificate from distinct valid matching votes.
@@ -145,7 +176,30 @@ class HotStuffDemo:
         never create a QC. Register the valid certificate, call dispatch_qc(qc),
         and enqueue ("next_view", "QC"). A6 handles a crashed collector.
         Do not implement transaction processing in this function."""
-        raise NotImplementedError('TODO A3 construct a certificate from distinct valid matching votes.')
+
+        block = self.blocks.get(block_id)
+        if block is None:
+            raise ValueError(f"form_qc: unknown block {block_id}")
+
+        # 只统计 1~4 号合法节点，且用集合去重（同一人投多次只算一次）
+        voters = sorted({v for v in self.votes.get(block_id, set()) if 1 <= v <= self.NODE_COUNT})
+
+        # 不足法定人数3 不签 QC
+        if len(voters) < self.QUORUM:
+            raise ValueError(f"form_qc: need {self.QUORUM} voters, got {len(voters)}")
+
+        # 签发证书：块号、块视图、投票者元组
+        qc = QC(block_id, block.view, tuple(voters))
+        self.qcs[block_id] = qc
+        self.log(f"QC({block_id}) view {qc.view} voters {qc.voters}", "qc")
+
+        # 把 QC 下发给所有副本（Node.receive_qc 在这里被调用）
+        self.dispatch_qc(qc)
+
+        # 进入下一个视图
+        self.events.append(("next_view", "QC"))
+
+    # raise NotImplementedError('TODO A3 construct a certificate from distinct valid matching votes.')
 
     def timeout(self, remaining):
         """A6 implement logical timeout countdown and leader replacement.
