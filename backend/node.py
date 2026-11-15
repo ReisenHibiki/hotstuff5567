@@ -79,7 +79,51 @@ class Node:
         contract. Preserve existing commits and prevent repeated commitment.
         Do not execute transactions here: dispatch_qc() invokes Task B.
         A7 may add certificate validation at this boundary as needed."""
-        raise NotImplementedError('TODO A4 update certificate/lock state and decide committed block IDs.')
+        # 负责一个副本收到一张证书后决定 要不要更新状态
+        # 并且根据连续的三链规则，判断哪些区块可以正式提交
+        # 崩溃副本停止工作，不产生新进度
+        if self.crashed:
+            return []
+
+        # 找到这张 QC 认证的块；块未知或视图对不上 → 拒绝（A7 的无效 QC 防线）
+        certified = self.blocks.get(qc.block_id)
+        if certified is None or certified.view != qc.view:
+            return []
+
+        # 更新 HighQC：只接受更高的视图
+        if qc.view > self.high_qc.view:
+            self.high_qc = qc
+
+        # 父块必须已知
+        p1 = self.blocks.get(certified.parent_id) if certified.parent_id else None
+        if p1 is None:
+            return []
+
+        # 更新 LockedQC：锁定“父块的证书” 我记得幻灯片课件中是这样要求的，后续需要检查
+        # 因为 Block.qc 认证的就是自己的父块，所以父块的证书 = certified.qc
+        if certified.qc is not None and certified.qc.view > self.locked_qc.view:
+            self.locked_qc = certified.qc
+
+        # 祖父块
+        p2 = self.blocks.get(p1.parent_id) if p1.parent_id else None
+        if p2 is None:
+            return []
+
+        # 三链提交条件：X、父、祖父必须是“连续视图”
+        # certified.view == p1.view + 1 == p2.view + 2
+        if certified.view == p1.view + 1 == p2.view + 2:
+            newly = []
+            cur = p2
+            # 从祖父往上收未提交的祖先（祖先在链更早的位置）
+            while cur is not None and cur.id not in self.committed_blocks:
+                newly.append(cur.id)
+                cur = self.blocks.get(cur.parent_id)
+            newly.reverse()  # 反转成“祖先在前”的顺序
+            self.committed_blocks.extend(newly)
+            return newly
+        return []
+
+    # raise NotImplementedError('TODO A4 update certificate/lock state and decide committed block IDs.')
 
 
 

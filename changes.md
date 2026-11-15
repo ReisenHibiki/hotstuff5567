@@ -5,7 +5,9 @@ Final commit: TO FILL
 
 | Student | Task item | Files and functions | Tests or evidence |
 | --- | --- | --- | --- |
-| TO FILL | | | |
+| Jiang Hengyu | Task A1-A2 | propose() vote() can_vote() extends() | Test-ok |
+| Jiang Hengyu | Task A3-A4 | form_qc() receive_qc()                | Test-ok |
+
 
 ## Completed extensions
 

@@ -65,6 +65,7 @@ class HotStuffDemo:
                 self.events.append(("propose", None))
             action, data = self.events.popleft()
             self.steps += 1
+            
             # 这里根据5个事件名调用对应的函数，传入数据
             {"propose": self.propose, "vote": self.vote, "qc": self.form_qc,
              "next_view": self.next_view, "timeout": self.timeout}[action](data)
@@ -177,6 +178,7 @@ class HotStuffDemo:
         and enqueue ("next_view", "QC"). A6 handles a crashed collector.
         Do not implement transaction processing in this function."""
 
+        # 负责 票收集齐全后判断要不要正式签发一张QC
         block = self.blocks.get(block_id)
         if block is None:
             raise ValueError(f"form_qc: unknown block {block_id}")
