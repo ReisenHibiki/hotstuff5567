@@ -139,8 +139,8 @@ class HotStuffDemo:
         event. Reject invalid proposals without changing voting or account state.
         A6: schedule a timeout if this round cannot obtain a QC."""
 
-        # coordinator 收到vote处理vote
-        # data 是 投票节点号和块号
+        # 负责 coordinator 收到vote处理vote
+        # data结构 是 投票节点号和块号
         node_id, block_id = data
         block = self.blocks.get(block_id)
         node = self.nodes[node_id - 1]
@@ -213,7 +213,14 @@ class HotStuffDemo:
         """A5 implement view increment, leader rotation and replica updates.
         Preserve QCs, locks and committed history. Call each node's enter_view
         as appropriate and enqueue the next proposal event."""
-        raise NotImplementedError('TODO A5 implement view increment, leader rotation and replica updates.')
+
+        # 这个比较简单，视图加一，然后通知 4 个副本
+        self.view += 1                                     # 视图 +1
+        for node in self.nodes:
+            node.enter_view(self.view, self.leader_id)     # 让每个副本进入新视图
+        self.events.append(("propose", None))              # 排下一个提案事件
+
+    # raise NotImplementedError('TODO A5 implement view increment, leader rotation and replica updates.')
 
     def crash_leader(self):
         leader = self.nodes[self.leader_id - 1]

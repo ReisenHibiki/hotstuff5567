@@ -7,7 +7,7 @@ Final commit: TO FILL
 | --- | --- | --- | --- |
 | Jiang Hengyu | Task A1-A2 | propose() vote() can_vote() extends() | Test-ok |
 | Jiang Hengyu | Task A3-A4 | form_qc() receive_qc()                | Test-ok |
-
+| Jiang Hengyu | Task A5    | next_view() enter_view()              | Test-ok |
 
 ## Completed extensions
 

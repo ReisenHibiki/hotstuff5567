@@ -19,7 +19,14 @@ class Node:
     def enter_view(self, view: int, leader_id: int):
         """A5 update local view and role for a live replica.
         A crashed replica remains frozen. Never erase voting history or locks."""
-        raise NotImplementedError('TODO A5 update local view and role for a live replica.')
+
+        # 同理，存活副本更新自己的 view 和角色
+        if self.crashed:
+            return                                 # 崩溃副本保持冻结
+        self.view = view
+        self.role = "Leader" if self.id == leader_id else "Replica"
+
+        # raise NotImplementedError('TODO A5 update local view and role for a live replica.')
 
     def extends(self, block_id: str, ancestor_id: str) -> bool:
         """A2 test whether block_id descends from ancestor_id, including itself.
