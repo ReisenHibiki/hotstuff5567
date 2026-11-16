@@ -183,6 +183,21 @@ class HotStuffDemo:
         if block is None:
             raise ValueError(f"form_qc: unknown block {block_id}")
 
+        # for A6: 检查这次 view 的 leader 是否已经崩溃
+        collector = self.nodes[block.proposer - 1]
+        # def timeout(self, remaining):
+        if collector.crashed:
+            self.phase = "collector crashed: waiting for timeout check"
+            self.log(
+                f"leader N{collector.id} crashed before QC({block_id})"
+                "scheduling timeout",
+                "timeout",
+            )
+
+            self.events.append(("timeout", self.TIMEOUT_TICKS))
+
+            return #如果没有 return 程序安排完超时之后会继续进行生成 QC
+
         # 只统计 1~4 号合法节点，且用集合去重（同一人投多次只算一次）
         voters = sorted({v for v in self.votes.get(block_id, set()) if 1 <= v <= self.NODE_COUNT})
 
@@ -207,7 +222,25 @@ class HotStuffDemo:
         """A6 implement logical timeout countdown and leader replacement.
         remaining is the number of logical ticks left. Eventually schedule
         ("next_view", "timeout") while preserving the quorum and safety state."""
-        raise NotImplementedError('TODO A6 implement logical timeout countdown and leader replacement.')
+
+        # timeout(3)
+        #   → timeout(2)
+        #   → timeout(1)
+        #   → next_view("timeout")
+        #   → propose(None)
+        # 显示并且记录该次倒计时
+        self.phase = f"Timeout: {remaining} tick(s) remaining"
+        self.log(f"view {self.view}: timeout countdown {remaining}", "timeout", )
+
+        # 没哟到最后一次 tick: 剩余次数减少 1， step() 继续处理
+        if remaining > 1:
+            self.events.append(("timeout", remaining - 1))
+        else:
+        # 安排进行 view 的更换, 下一步调用 next_view()
+            self.phase = "Timeout expired and wait for next view"
+            self.log("view {self.view}: timeout expired and schedule view change", "timeout", )
+            self.events.append(("next_view", "timeout"))
+        # raise NotImplementedError('TODO A6 implement logical timeout countdown and leader replacement.')
 
     def next_view(self, reason):
         """A5 implement view increment, leader rotation and replica updates.
@@ -237,13 +270,52 @@ class HotStuffDemo:
                  "All nodes vote normally", "fault")
 
     def recover(self):
-        """A6 restore crashed replicas from a trusted live peer.
-        Catch up blocks, QCs, locks, committed chain and application state.
-        Preserve voting history so a replica cannot vote twice in one view.
-        Restore balances and receipts, and B6 nonces if implemented. If no live
-        peer is available, reject recovery without inventing state. No disk
-        persistence is required. Clear simulated faults and rejoin safely."""
-        raise NotImplementedError('TODO A6 restore crashed replicas from a trusted live peer.')
+        # """A6 restore crashed replicas from a trusted live peer.
+        # Catch up blocks, QCs, locks, committed chain and application state.
+        # Preserve voting history so a replica cannot vote twice in one view.
+        # Restore balances and receipts, and B6 nonces if implemented. If no live
+        # peer is available, reject recovery without inventing state. No disk
+        # persistence is required. Clear simulated faults and rejoin safely."""
+        # raise NotImplementedError('TODO A6 restore crashed replicas from a trusted live peer.')
+
+        # 寻找存活节点
+        live = [node for node in self.nodes if not node.crashed]
+
+        if not live:
+            raise ValueError("cannot recover: no live peer available")
+
+        # 从存活节点同步来源 优先选择提交链最长 HighQC 的 view
+        source = max(
+            live,
+            key = lambda node: (
+                len(node.committed_blocks),
+                node.high_qc.view,
+            ),
+        )
+
+        # 为崩溃节点恢复状态
+
+        for node in self.nodes:
+            if node.crashed:
+                node.blocks = deepcopy(source.blocks)
+                node.high_qc = deepcopy(source.high_qc)
+                node.locked_qc = deepcopy(source.locked_qc)
+                node.committed_blocks = source.committed_blocks.copy()
+                node.machine = deepcopy(source.machine)
+                # 不修改 node.id 和 node.last_voted_view
+
+                #先解除状态 再进入 view
+                node.crashed = False
+                node.enter_view(self.view, self.leader_id)
+
+                self.log(
+                    f"N{node.id} recovered from N{source.id}",
+                    "fault",
+                )
+            # 恢复操作清楚扣票故障 包括未崩溃节点
+            node.withhold_vote = False
+        self.phase = "recovery complete: faults cleared"
+
 
     def snapshot(self):
         source = max(self.nodes, key=lambda n: len(n.committed_blocks))
