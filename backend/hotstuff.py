@@ -55,7 +55,24 @@ class HotStuffDemo:
         in [1, 1000000]. Invalid requests must not modify state. Allocate Tx1,
         Tx2, ... for the basic task. B6 may extend this interface for signed input.
         Do not execute transfers here."""
-        raise NotImplementedError('TODO B1 implement transaction admission and mempool insertion.')
+        # 1) 先做全部校验，任何一项失败都在修改状态之前抛出 ValueError。
+        if sender not in INITIAL_BALANCES or receiver not in INITIAL_BALANCES:
+            raise ValueError("Unknown sender or receiver account")
+        if sender == receiver:
+            # 设计决定：规范未规定，自转账没有意义，这里拒绝。
+            raise ValueError("Sender and receiver must be different")
+        # type(...) is int 而不是 isinstance：bool 是 int 的子类，True 必须被拒绝。
+        if type(amount) is not int or not 1 <= amount <= 1_000_000:
+            raise ValueError("Amount must be an integer between 1 and 1000000")
+
+        # 2) 分配 ID。transactions 只增不减，所以长度+1 就是下一个编号；reset 后回到 Tx1。
+        tx = Transaction(f"Tx{len(self.transactions) + 1}", sender, receiver, amount)
+
+        # 3) 登记并进入待处理池。这里只做准入，不检查余额、不改余额（那是 B3 执行时的事）。
+        self.transactions[tx.id] = tx
+        self.mempool.append(tx.id)
+        self.log(f"{tx.id} admitted: {sender} -> {receiver} {amount}", "tx")
+        return tx
 
     def step(self):
         """Provided event dispatcher; a missing TODO pauses without losing work."""
@@ -283,7 +300,23 @@ class HotStuffDemo:
         on the selected parent chain. An abandoned branch does not exclude an ID.
         Empty input returns an empty list. Keep IDs in the pool until commit.
         """
-        raise NotImplementedError("TODO B2 implement select_transactions")
+        # 1) 从 parent 沿父指针一路走回创世块，收集这条链上已经打包过的交易 ID。
+        #    只看“这条父链”：别的（被废弃的）分支上的交易不在其中，所以仍可重新打包。
+        used = set()
+        current = parent
+        while current is not None:
+            used.update(tx.id for tx in current.transactions)
+            current = self.blocks.get(current.parent_id) if current.parent_id else None
+
+        # 2) 按提交顺序（mempool 的顺序）挑出不在父链上的交易，最多 max_txs_per_block 笔。
+        #    只读不删：交易要等提交后才由 finalize_transactions() 清出池子。
+        selected = []
+        for tx_id in self.mempool:
+            if len(selected) >= self.max_txs_per_block:
+                break
+            if tx_id not in used:
+                selected.append(self.transactions[tx_id])
+        return selected  # 没有可选交易时返回 []，即空块
 
     def finalize_transactions(self, committed_ids: list[str]):
         """B4 finalize pool entries after per-replica execution.
@@ -292,14 +325,36 @@ class HotStuffDemo:
         and record useful transaction events. Repeated finalization is harmless.
         This method does not execute transfers or decide consensus.
         """
-        raise NotImplementedError("TODO B4 implement finalize_transactions")
+        # 回执存在各副本自己的状态机里；这里取一个存活副本的回执只用于写日志。
+        live = next((n for n in self.nodes if not n.crashed), None)
+        for block_id in committed_ids:
+            block = self.blocks.get(block_id)
+            if block is None:
+                continue
+            for tx in block.transactions:
+                # 已经清理过的交易直接跳过，所以重复调用不会出错、也不会重复记日志。
+                if tx.id not in self.mempool:
+                    continue
+                # 成功和被拒绝的交易都移出池子：两者都已有最终回执，不该再被打包。
+                self.mempool.remove(tx.id)
+                receipt = live.machine.receipts.get(tx.id) if live else None
+                if receipt and receipt["status"] == "rejected":
+                    self.log(f"{tx.id} rejected in {block_id}: {receipt['error']}", "fault")
+                else:
+                    self.log(f"{tx.id} executed in {block_id}: "
+                             f"{tx.sender} -> {tx.receiver} {tx.amount}", "commit")
 
     def configure_batch(self, limit):
         """B5 set a positive integer batch limit and return the accepted value.
         Reject bool, zero, negatives and non-integers without changing state.
         Reset restores the default value 5 in this starter contract.
         """
-        raise NotImplementedError("TODO B5 implement configure_batch")
+        # type(...) is int 同时挡住 bool、浮点数和字符串；校验失败时不改状态。
+        if type(limit) is not int or limit < 1:
+            raise ValueError("Batch limit must be a positive integer")
+        self.max_txs_per_block = limit
+        self.log(f"Batch limit set to {limit} transactions per block", "info")
+        return limit
 
     def inject_attack(self, kind: str, node_id: int):
         """A7 inject an active Byzantine action in the current experiment.
