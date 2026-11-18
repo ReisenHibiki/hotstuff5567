@@ -167,11 +167,11 @@ class HotStuffTests(unittest.TestCase):
         # 数据独立, 两个节点不能同享一个可变状态对象
         self.assertIsNot(recovered.blocks, peer.blocks)
         self.assertIsNot(recovered.machine, peer.machine)
-        self.assert_agreement
+        self.assert_agreement()
 
         #恢复后的节点继续跟进
         old_length = len(recovered.committed_blocks)
         self.advance_until(
             lambda: len(recovered.committed_blocks)> old_length
         )
-        self.assert_agreement
+        self.assert_agreement()

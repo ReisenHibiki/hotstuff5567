@@ -116,20 +116,62 @@ class HotStuffDemo:
         self.blocks[block.id] = block
         self.votes[block.id] = set()
 
-        # 把块分发给每个“存活”副本, receive_qc 是从 node.blocks 里查块的
-        # 崩溃副本不发，保证它状态冻结
-        for node in self.nodes:
-            if not node.crashed:
-                node.blocks[block.id] = block
+        # 正常提案发给全部节点；辅助函数会跳过崩溃节点。
+        self._deliver_proposal(
+            block,
+            [node.id for node in self.nodes],
+        )
 
-        self.log(f"N{self.leader_id} proposed {block.id} (view {self.view}, parent {parent_id})", "propose")
+        self.log(
+            f"N{self.leader_id} proposed {block.id} "
+            f"(view {self.view}, parent {parent_id})",
+            "propose",
+        )
         self.phase = f"Proposed {block.id}"
 
+        # self.log(f"N{self.leader_id} proposed {block.id} (view {self.view}, parent {parent_id})", "propose")
+        # self.phase = f"Proposed {block.id}"
+
+        # 避免重复排队打乱 `test_collector_crash_before_qc` 预期的事件顺序
         # 给 4 个副本各排一个投票事件, 崩溃节点也会排，但投票时会被判为无效，相当于空操作
-        for node in self.nodes:
-            self.events.append(("vote", (node.id, block.id)))
+        # for node in self.nodes:
+        #     self.events.append(("vote", (node.id, block.id)))
 
     # raise NotImplementedError('TODO A1 implement a leader proposal for the current view.')
+
+    def _deliver_proposal(self, block, recipient_ids):
+        """ Register a proposal and deliver it to selected live nodes"""
+
+        # 先检查所哟接收者的 ID, 避免输入非法
+        recipients = list(recipient_ids)
+        if any(
+            type(node_id) is not int
+            or node_id not in range(1, self.NODE_COUNT + 1)
+            for node_id in recipients
+        ):
+            raise ValueError("Recipient ID must be an integer from 1 to 4")
+    # 同一个区块 ID 不允许对应不同内容:
+        existing = self.blocks.get(block.id)
+
+        # if existing : self.blocks.get(block.id)
+
+        if existing is not None and existing != block:
+            raise ValueError(
+                "Conflicting contents for an existing block ID"
+            )
+
+        # 全局登记区块: 再一次投递同一个区块保留已有票数:
+        self.blocks.setdefault(block.id, deepcopy(block))
+        self.votes.setdefault(block.id, set())
+
+        # 只向存活节点投递:
+        for node_id in recipients:
+            node = self.nodes[node_id - 1]
+
+            if node.crashed:
+                continue
+            node.blocks[block.id] = deepcopy(block)
+            self.events.append(("vote", (node.id, block.id)))
 
     def vote(self, data):
         """A2 implement proposal validation and one safe vote per replica/view.
