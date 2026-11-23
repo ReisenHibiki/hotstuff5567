@@ -140,4 +140,20 @@ class Node:
         and payload order; call machine.apply() and rely on B4 receipt semantics
         for repeat delivery. A crashed replica must not execute new work.
         """
-        raise NotImplementedError("TODO B3 implement execute_committed")
+        # 崩溃的副本不执行任何新工作（恢复后由 A6 负责追赶）。
+        if self.crashed:
+            return []
+
+        # 先整体校验，再执行：只要有一个 ID 未知或不在本副本的已提交历史里，
+        # 就在改动任何余额之前抛错。这保证“未提交的交易绝不执行”。
+        for block_id in block_ids:
+            if block_id not in self.blocks or block_id not in self.committed_blocks:
+                raise ValueError(f"Block {block_id} is not committed on N{self.id}")
+
+        # 按传入的区块顺序（祖先在前）和区块内的交易顺序逐笔执行。
+        # 顺序固定，所有副本才能算出相同的余额。重复投递由 apply() 的回执去重兜底。
+        receipts = []
+        for block_id in block_ids:
+            for tx in self.blocks[block_id].transactions:
+                receipts.append(self.machine.apply(tx))
+        return receipts
