@@ -175,3 +175,96 @@ class HotStuffTests(unittest.TestCase):
             lambda: len(recovered.committed_blocks)> old_length
         )
         self.assert_agreement()
+
+# python -B - <<'PY'
+# from backend.security import PUBLIC_KEYS, sign_transaction, verify_transaction
+# from client_keys import classroom_private_key
+
+# assert set(PUBLIC_KEYS) == {"Alice", "Bob", "Charlie"}
+
+# request = sign_transaction(
+#     "Alice", "Bob", 10, 0,
+#     private_key=classroom_private_key("Alice"),
+# )
+
+# assert verify_transaction(**request) is True
+# print("public keys and signature check passed")
+# PY
+    def test_recover_preserves_signed_state(self):
+        from backend.blockchain import StateMachine
+        from backend.models import Transaction
+        from backend.security import sign_transaction, transaction_id
+        from client_keys import classroom_private_key
+
+        # 当前构造函数还没有传递安全模式，测试中先显式配置各状态机。
+         # 手动替换状态机
+        # for node in self.demo.nodes:
+        #     node.machine = StateMachine(require_signatures=True)
+
+        self.demo = HotStuffDemo(require_signatures=True)
+
+        recovered = self.demo.nodes[0]
+        self.demo.crash_leader()
+
+        # 两笔交易：第一笔成功，第二笔余额不足。
+        # 两种最终结果都必须消耗 nonce，并随恢复复制。
+        transactions = []
+        for nonce, receiver in enumerate(("Bob", "Charlie")):
+            request = sign_transaction(
+                "Alice", receiver, 80, nonce,
+                private_key=classroom_private_key("Alice"),
+            )
+            # tx = Transaction(
+            #     id=transaction_id("Alice", receiver, 80, nonce),
+            #     **request,
+            # )
+            # transactions.append(tx)
+
+            # # 仅测试夹具：暂时绕过尚未扩展的 submit()。
+            # self.demo.transactions[tx.id] = tx
+            # self.demo.mempool.append(tx.id)
+            tx = self.demo.submit(**request)
+            transactions.append(tx)
+        # 真实推进共识，等待存活节点执行完两笔交易。
+        self.advance_until(
+            lambda: self.demo.nodes[1].machine.nonces["Alice"] == 2
+        )
+
+        # 崩溃节点应当仍然冻结在初始状态。
+        self.assertEqual(recovered.machine.nonces["Alice"], 0)
+        self.assertEqual(recovered.machine.receipts, {})
+        self.assertEqual(recovered.machine.accounts["Alice"], 100)
+
+        self.demo.recover()
+
+        peer = self.demo.nodes[1].machine
+        expected_accounts = {"Alice": 20, "Bob": 180, "Charlie": 100}
+        expected_nonces = {"Alice": 2, "Bob": 0, "Charlie": 0}
+
+        for node in self.demo.nodes:
+            self.assertFalse(node.crashed)
+            self.assertTrue(node.machine.require_signatures)
+            self.assertEqual(node.machine.accounts, expected_accounts)
+            self.assertEqual(node.machine.nonces, expected_nonces)
+            self.assertEqual(node.machine.receipts, peer.receipts)
+            self.assertEqual(
+                node.machine.receipts[transactions[0].id]["status"],
+                "committed",
+            )
+            self.assertEqual(
+                node.machine.receipts[transactions[1].id]["status"],
+                "rejected",
+            )
+
+        # 恢复后值相等，但可变对象必须独立。
+        self.assertIsNot(recovered.machine, peer)
+        self.assertIsNot(recovered.machine.nonces, peer.nonces)
+        self.assertIsNot(recovered.machine.receipts, peer.receipts)
+
+        # 再投递已提交历史，不能重复扣款或重复消耗 nonce。
+        recovered.execute_committed(recovered.committed_blocks)
+        self.assertEqual(recovered.machine.accounts, expected_accounts)
+        self.assertEqual(recovered.machine.nonces, expected_nonces)
+        self.assertEqual(recovered.machine.receipts, peer.receipts)
+
+        self.assert_agreement()

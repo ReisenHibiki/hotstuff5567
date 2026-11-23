@@ -10,14 +10,15 @@ from dataclasses import asdict
 from .blockchain import INITIAL_BALANCES
 from .models import Block, QC, Transaction
 from .node import Node
-
+from .security import transaction_id, verify_transaction
 
 class HotStuffDemo:
     NODE_COUNT = 4
     QUORUM = 3
     TIMEOUT_TICKS = 3
 
-    def __init__(self):
+    def __init__(self, require_signatures: bool = False):
+        self.require_signatures = require_signatures
         self.reset()
 
     @property
@@ -34,6 +35,10 @@ class HotStuffDemo:
         genesis_qc = QC("B0", 0, (1, 2, 3, 4))
         self.view = 1
         self.nodes = [Node(i, genesis, genesis_qc) for i in range(1, 5)]
+
+        for node in self.nodes:
+            node.machine.require_signatures = self.require_signatures
+        self._basic_tx_sequence = 0
         self.blocks = {genesis.id: genesis}
         self.qcs = {genesis.id: genesis_qc}
         self.transactions: dict[str, Transaction] = {}
@@ -49,13 +54,22 @@ class HotStuffDemo:
         self.phase = "Ready for proposal"
         self.log("Genesis B0 committed · Enter View 1 · Leader N1", "view")
 
-    def submit(self, sender: str, receiver: str, amount: int) -> Transaction:
+    def submit(
+            self, 
+            sender: str, 
+            receiver: str, 
+            amount: int,
+            nonce: int | None = None,
+            signature: str | None = None,
+        ) -> Transaction:
         """B1 implement transaction admission and mempool insertion.
         Return a Transaction; validate account names and a strict integer amount
         in [1, 1000000]. Invalid requests must not modify state. Allocate Tx1,
         Tx2, ... for the basic task. B6 may extend this interface for signed input.
         Do not execute transfers here."""
         # 1) 先做全部校验，任何一项失败都在修改状态之前抛出 ValueError。
+        if type(sender) is not str or type(receiver) is not str:
+            raise ValueError("Account names must be strs")
         if sender not in INITIAL_BALANCES or receiver not in INITIAL_BALANCES:
             raise ValueError("Unknown sender or receiver account")
         if sender == receiver:
@@ -64,9 +78,72 @@ class HotStuffDemo:
         # type(...) is int 而不是 isinstance：bool 是 int 的子类，True 必须被拒绝。
         if type(amount) is not int or not 1 <= amount <= 1_000_000:
             raise ValueError("Amount must be an integer between 1 and 1000000")
+        unsigned = nonce is None and signature is None
 
+        if unsigned:
+            if self.require_signatures:
+                raise ValueError("Signature required")
+
+            self._basic_tx_sequence += 1
+            tx = Transaction(
+                f"Tx{self._basic_tx_sequence}", sender, receiver, amount
+            )
+
+        else:
+            if nonce is None or signature is None:
+                raise ValueError("Nonce and signature must be provided together")
+            if type(nonce) is not int or nonce < 0:
+                raise ValueError("Nonce must be a non-negative integer")
+
+            # 1. 先验签。
+            if not verify_transaction(
+                sender, receiver, amount, nonce, signature
+            ):
+                raise ValueError("Invalid signature")
+
+            # 2. 按载荷确定身份。
+            tx_id = transaction_id(sender, receiver, amount, nonce)
+
+            # 3. 合法重试先返回原交易，不重新检查 nonce，不重复入池。
+            if tx_id in self.transactions:
+                return self.transactions[tx_id]
+
+            # 4. 新交易才检查 nonce。
+            live = [node for node in self.nodes if not node.crashed]
+            if not live:
+                raise ValueError("Cannot admit a new signed transaction: no live replica")
+
+            source = max(
+                live,
+                key=lambda node: (
+                    len(node.committed_blocks),
+                    node.high_qc.view,
+                ),
+            )
+            machine = source.machine
+
+            pending = sum(
+                1
+                for pending_id in self.mempool
+                if self.transactions[pending_id].sender == sender
+                and self.transactions[pending_id].nonce is not None
+                and pending_id not in machine.receipts
+            )
+            expected_nonce = machine.nonces[sender] + pending
+
+            if nonce != expected_nonce:
+                raise ValueError(
+                    f"Expected nonce {expected_nonce}, got {nonce}"
+                )
         # 2) 分配 ID。transactions 只增不减，所以长度+1 就是下一个编号；reset 后回到 Tx1。
-        tx = Transaction(f"Tx{len(self.transactions) + 1}", sender, receiver, amount)
+            tx = Transaction(
+                id = tx_id,
+                sender = sender,
+                receiver= receiver,
+                amount= amount,
+                nonce= nonce,
+                signature= signature,
+            )
 
         # 3) 登记并进入待处理池。这里只做准入，不检查余额、不改余额（那是 B3 执行时的事）。
         self.transactions[tx.id] = tx

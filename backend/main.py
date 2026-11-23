@@ -16,7 +16,7 @@ import uvicorn
 from backend.hotstuff import HotStuffDemo
 
 
-demo = HotStuffDemo()
+demo = HotStuffDemo(require_signatures=True)
 FRONTEND = Path(__file__).resolve().parent.parent / "frontend"
 
 
@@ -54,6 +54,12 @@ class TransferRequest(BaseModel):
     sender: str
     receiver: str
     amount: int = Field(strict=True, ge=1, le=1_000_000)
+    nonce: int | None = Field(default=None, strict=True, ge=0)
+    signature: str | None = Field(
+        default=None,
+        strict=True,
+        pattern=r"^[0-9a-f]{128}$",
+    )
 
 
 class ByzantineRequest(BaseModel):
@@ -94,7 +100,12 @@ async def control(action: str):
 @app.post("/api/transactions")
 async def submit_transaction(request: TransferRequest):
     try:
-        tx = demo.submit(request.sender, request.receiver, request.amount)
+        tx = demo.submit(request.sender, 
+                         request.receiver, 
+                         request.amount,
+                         nonce= request.nonce,
+                         signature= request.signature,
+                         )
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
     return {"transaction_id": tx.id, "state": demo.snapshot()}
