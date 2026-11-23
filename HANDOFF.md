@@ -116,3 +116,17 @@ B1–B5 的全部 6 个函数都是在 AI（Claude）辅助下写成的，每个
 | 提交后重试 | 通过真实 `step()` 等待最终回执，再重试；ID 不变、余额只扣一次、nonce 只增加一次 |
 | nonce 与余额不足 | 连续 nonce 可以入池；同 nonce 不同载荷、跳号 nonce 被拒；账户之间独立；已认证余额不足产生最终 rejected 并消耗 nonce |
 | 执行层再次验证 | 绕过准入给 `apply()` 假签名、伪造 ID、畸形字段；均不扣款、不消耗 nonce、不占用真实交易的最终回执 |
+
+“未来 nonce 的处理”
+
+伪造签名不会污染真实交易的 ID。
+原样重放返回原来的回执。
+用过的 nonce 会存一条最终的拒绝回执，未来 nonce 则不存。
+已认证但余额不足，照样消耗 nonce。
+字段类型不对时不会抛异常
+
+TODO:
+submit() 的签名路径，包括拒绝未签名的请求
+TransferRequest 加 nonce 和 signature 两个字段
+最小签名客户端
+test_security.py
