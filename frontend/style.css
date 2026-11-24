@@ -507,9 +507,19 @@ dd small {
   margin-left:6px;
 }
 
+.accounts .account-nonce {
+  display:block;
+  font:10px ui-monospace,monospace;
+}
+
+.tx-nonce {
+  color:var(--muted);
+  font:10px ui-monospace,monospace;
+}
+
 form {
   display:grid;
-  grid-template-columns:1fr 1fr 1fr auto;
+  grid-template-columns:1fr 1fr 1fr .7fr auto;
   gap:10px;
   align-items:end;
   margin-bottom:12px;

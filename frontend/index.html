@@ -4,8 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>HotStuff · Consensus Lab</title>
-  <link rel="stylesheet" href="/static/style.css">
-  <script defer src="/static/app.js"></script>
+  <link rel="stylesheet" href="/static/style.css?v=b6.1">
+  <script defer src="/static/signing.js?v=b6.1"></script>
+  <script defer src="/static/app.js?v=b6.1"></script>
 </head>
 <body>
   <main>
@@ -58,9 +59,10 @@
             <label>From<select id="sender"><option>Alice</option><option>Bob</option><option>Charlie</option></select></label>
             <label>To<select id="receiver"><option>Bob</option><option>Alice</option><option>Charlie</option></select></label>
             <label>Amount<input id="amount" type="number" value="10" min="1" max="1000000" step="1" required></label>
-            <button class="primary" type="submit">Submit</button>
+            <label>Nonce<input id="nonce" type="number" value="0" min="0" step="1" required></label>
+            <button class="primary" type="submit">Sign &amp; Submit</button>
           </form>
-          <div id="tx-message" class="hint" role="status">TRANSFER Alice Bob 10 · Submit to the mempool</div>
+          <div id="tx-message" class="hint" role="status">Signed in this browser with the sender's classroom Ed25519 test key · Nonce fills in automatically</div>
           <div class="subheading">MEMPOOL <span id="mempool-count">0</span></div>
           <div id="mempool" class="tx-list"></div>
           <details><summary>Transaction receipts <span id="receipt-count">0</span></summary><div id="receipts" class="tx-list"></div></details>
@@ -73,7 +75,7 @@
         <div id="logs" class="logs" aria-label="Protocol event log"></div>
       </section>
     </div>
-    <footer>Student starter · Core algorithms intentionally incomplete · No real signatures or network partitions · One event per step · Auto: 0.8 s/step · Timeout: 3 logical ticks, frozen while paused</footer>
+    <footer>Student starter · Core algorithms intentionally incomplete · Transfers signed in the browser with Ed25519 classroom test keys · No network partitions · One event per step · Auto: 0.8 s/step · Timeout: 3 logical ticks, frozen while paused</footer>
   </main>
 </body>
 </html>

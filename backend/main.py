@@ -68,7 +68,9 @@ class ByzantineRequest(BaseModel):
 
 @app.get("/")
 async def index():
-    return FileResponse(FRONTEND / "index.html")
+    # Revalidate the page on every visit so a cached old dashboard (without the
+    # signing client) is never shown; its scripts carry a ?v= version instead.
+    return FileResponse(FRONTEND / "index.html", headers={"Cache-Control": "no-cache"})
 
 
 @app.get("/api/state")

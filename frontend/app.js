@@ -5,6 +5,7 @@ let selectedBlock = 'B0';
 let busy = false;
 let requestNumber = 0;
 let renderedRequest = 0;
+let nonceEdited = false; // [AI-assisted] B6: stop auto-filling once the user types a nonce
 
 async function api(path, body) {
   const number = ++requestNumber;
@@ -13,7 +14,7 @@ async function api(path, body) {
   });
   const data = await response.json();
   if (!response.ok) {
-    const detail = typeof data.detail === 'string' ? data.detail : 'Invalid input. Check the accounts and enter a whole-number amount.';
+    const detail = typeof data.detail === 'string' ? data.detail : 'Invalid input. Check the accounts and enter a whole-number amount and nonce.';
     throw new Error(detail);
   }
   if (number >= renderedRequest) {
@@ -42,8 +43,15 @@ async function mutate(path, body = {}) {
 }
 
 function qcLabel(qc) { return `${qc.block_id} <small>v${qc.view}</small>`; }
+// Signed IDs are 67 characters (tx- + SHA-256); show a prefix, keep the full ID on hover.
+function shortId(id) { return id.length > 14 ? `${id.slice(0, 11)}…` : id; }
 function txLine(tx) {
-  return `<span class="mono">${escapeHtml(tx.id)}</span><span>${escapeHtml(tx.sender)} → ${escapeHtml(tx.receiver)}</span><strong>${tx.amount}</strong>`;
+  const nonce = tx.nonce === null || tx.nonce === undefined ? '' : `<small class="tx-nonce">nonce ${tx.nonce}</small>`;
+  return `<span class="mono" title="${escapeHtml(tx.id)}">${escapeHtml(shortId(tx.id))}</span><span>${escapeHtml(tx.sender)} → ${escapeHtml(tx.receiver)}</span>${nonce}<strong>${tx.amount}</strong>`;
+}
+function fillNonce() {
+  if (nonceEdited || !currentState || !currentState.next_nonces) return;
+  $('nonce').value = currentState.next_nonces[$('sender').value] ?? '';
 }
 
 function render(state) {
@@ -72,7 +80,8 @@ function render(state) {
     </button>`).join('');
   $('committed-chain').textContent = state.committed_chain.join(' → ');
   renderBlock();
-  $('accounts').innerHTML = Object.entries(state.accounts).map(([name, balance]) => `<div><span>${name}</span><strong>${balance}<small>units</small></strong></div>`).join('');
+  $('accounts').innerHTML = Object.entries(state.accounts).map(([name, balance]) => `<div><span>${name}</span><strong>${balance}<small>units</small></strong><span class="account-nonce">committed nonce ${state.nonces ? state.nonces[name] : '—'}</span></div>`).join('');
+  fillNonce();
   $('mempool-count').textContent = state.mempool.length;
   $('mempool').innerHTML = state.mempool.length ? state.mempool.map(tx => `<div class="tx">${txLine(tx)}</div>`).join('') : '<p class="empty">Mempool is empty · Submit a transfer to begin</p>';
   const receipts = state.transactions.filter(tx => tx.status !== 'pending');
@@ -97,7 +106,11 @@ function renderBlock() {
 document.querySelectorAll('[data-action]').forEach(button => {
   button.addEventListener('click', async () => {
     const data = await mutate(`/api/control/${button.dataset.action}`);
-    if (data && button.dataset.action === 'reset') $('tx-message').textContent = 'Reset complete · All balances restored to 100';
+    if (data && button.dataset.action === 'reset') {
+      nonceEdited = false;
+      fillNonce();
+      $('tx-message').textContent = 'Reset complete · All balances restored to 100 · Nonces back to 0';
+    }
   });
 });
 $('byzantine').addEventListener('change', event => mutate('/api/byzantine', {node_id: event.target.value ? Number(event.target.value) : null}));
@@ -105,10 +118,31 @@ $('blocks').addEventListener('click', event => {
   const block = event.target.closest('[data-block]');
   if (block) { selectedBlock = block.dataset.block; render(currentState); }
 });
+// [AI-assisted] B6: sign in the browser (signing.js), then submit the signed request.
+$('sender').addEventListener('change', () => { nonceEdited = false; fillNonce(); });
+$('nonce').addEventListener('input', () => { nonceEdited = true; });
 $('transfer-form').addEventListener('submit', async event => {
   event.preventDefault();
-  const result = await mutate('/api/transactions', {sender: $('sender').value, receiver: $('receiver').value, amount: Number($('amount').value)});
-  if (result) $('tx-message').textContent = `${result.transaction_id} entered the mempool · Click Start or Next Step to advance to commit`;
+  let request;
+  try {
+    request = await HotStuffSigning.signTransaction($('sender').value, $('receiver').value, Number($('amount').value), Number($('nonce').value));
+  } catch (error) {
+    $('error').textContent = error.message;
+    $('error').hidden = false;
+  }
+  const result = request && await mutate('/api/transactions', request);
+  if (!result) {
+    // Repeat the failure next to the form; the banner is at the top of the page.
+    if (!$('error').hidden) $('tx-message').textContent = `Not admitted · ${$('error').textContent}`;
+    return;
+  }
+  nonceEdited = false;
+  fillNonce();
+  const id = shortId(result.transaction_id);
+  const tx = result.state.transactions.find(t => t.id === result.transaction_id);
+  $('tx-message').textContent = tx && tx.status !== 'pending'
+    ? `${id} already has a final receipt (${tx.status}) · The identical signed request was not executed again`
+    : `${id} (nonce ${request.nonce}) is pending in the mempool · Click Start or Next Step to advance to commit`;
 });
 
 async function poll() {

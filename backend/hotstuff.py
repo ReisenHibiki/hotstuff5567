@@ -109,27 +109,9 @@ class HotStuffDemo:
                 return self.transactions[tx_id]
 
             # 4. 新交易才检查 nonce。
-            live = [node for node in self.nodes if not node.crashed]
-            if not live:
+            expected_nonce = self.expected_nonce(sender)
+            if expected_nonce is None:
                 raise ValueError("Cannot admit a new signed transaction: no live replica")
-
-            source = max(
-                live,
-                key=lambda node: (
-                    len(node.committed_blocks),
-                    node.high_qc.view,
-                ),
-            )
-            machine = source.machine
-
-            pending = sum(
-                1
-                for pending_id in self.mempool
-                if self.transactions[pending_id].sender == sender
-                and self.transactions[pending_id].nonce is not None
-                and pending_id not in machine.receipts
-            )
-            expected_nonce = machine.nonces[sender] + pending
 
             if nonce != expected_nonce:
                 raise ValueError(
@@ -150,6 +132,34 @@ class HotStuffDemo:
         self.mempool.append(tx.id)
         self.log(f"{tx.id} admitted: {sender} -> {receiver} {amount}", "tx")
         return tx
+
+    def expected_nonce(self, sender: str) -> int | None:
+        """Nonce that admission requires for the sender's next new signed transfer:
+        the committed nonce on the most advanced live replica plus the sender's
+        signed transactions still pending in the pool. None when no replica is live."""
+        # [AI-assisted] Extracted unchanged from submit() so the dashboard form can
+        # pre-fill the same value that admission checks.
+        live = [node for node in self.nodes if not node.crashed]
+        if not live:
+            return None
+
+        source = max(
+            live,
+            key=lambda node: (
+                len(node.committed_blocks),
+                node.high_qc.view,
+            ),
+        )
+        machine = source.machine
+
+        pending = sum(
+            1
+            for pending_id in self.mempool
+            if self.transactions[pending_id].sender == sender
+            and self.transactions[pending_id].nonce is not None
+            and pending_id not in machine.receipts
+        )
+        return machine.nonces[sender] + pending
 
     def step(self):
         """Provided event dispatcher; a missing TODO pauses without losing work."""
@@ -479,6 +489,9 @@ class HotStuffDemo:
                 "steps": self.steps, "phase": self.phase, "nodes": node_states,
                 "blocks": blocks, "mempool": [asdict(self.transactions[t]) for t in self.mempool],
                 "transactions": transactions, "accounts": source.machine.accounts.copy(),
+                # B6: committed nonces, and the nonce the next signed transfer must use.
+                "nonces": source.machine.nonces.copy(),
+                "next_nonces": {account: self.expected_nonce(account) for account in INITIAL_BALANCES},
                 "committed_chain": source.committed_blocks.copy(), "consistent": consistent,
                 "logs": list(self.logs), "quorum": self.QUORUM,
                 "next_event": self.events[0][0] if self.events else "propose"}
