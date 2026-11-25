@@ -384,7 +384,7 @@ class HotStuffDemo:
         else:
         # 安排进行 view 的更换, 下一步调用 next_view()
             self.phase = "Timeout expired and wait for next view"
-            self.log("view {self.view}: timeout expired and schedule view change", "timeout", )
+            self.log(f"view {self.view}: timeout expired and schedule view change", "timeout", )
             self.events.append(("next_view", "timeout"))
         # raise NotImplementedError('TODO A6 implement logical timeout countdown and leader replacement.')
 
